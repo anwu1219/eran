@@ -1,4 +1,4 @@
-numpy
+numpy==1.18.0
 tensorflow
 onnx==1.5.0
 pycddlib
