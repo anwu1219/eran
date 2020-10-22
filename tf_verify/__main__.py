@@ -40,6 +40,7 @@ import logging
 import torch
 import spatial
 from copy import deepcopy
+from keras.datasets import mnist
 
 #ZONOTOPE_EXTENSION = '.zt'
 EPS = 10**(-9)
@@ -274,17 +275,15 @@ def acasxu_recursive(specLB, specUB, max_depth=10, depth=0):
 
 
 
-def get_tests(dataset, geometric):
+def get_tests(dataset, index, geometric):
     if geometric:
         csvfile = open('../deepg/code/datasets/{}_test.csv'.format(dataset), 'r')
+    elif dataset == 'mnist':
+            (x_train, y_train), (X_test, y_test) = mnist.load_data()
+            image = np.array(x_train[index]).flatten().tolist()
+            tests = [[y_train[index]] + image]
     else:
-        if config.subset == None:
-            csvfile = open('../data/{}_test.csv'.format(dataset), 'r')
-        else:
-            filename = '../data/'+ dataset+ '_test_' + config.subset + '.csv'
-            csvfile = open(filename, 'r')
-    tests = csv.reader(csvfile, delimiter=',')
-
+        tests = []
     return tests
 
 
@@ -332,6 +331,8 @@ parser.add_argument('--spatial', action='store_true', default=config.spatial, he
 parser.add_argument('--t-norm', type=str, default=config.t_norm, help='vector field norm (1, 2, or inf)')
 parser.add_argument('--delta', type=float, default=config.delta, help='vector field displacement magnitude')
 parser.add_argument('--gamma', type=float, default=config.gamma, help='vector field smoothness constraint')
+parser.add_argument('--ind', type=int, default=0, help='the index of points in the training data')
+parser.add_argument('--target-label', type=int, default=0, help='the target of the adversarial attack')
 
 # Logging options
 parser.add_argument('--logdir', type=str, default=None, help='Location to save logs to. If not specified, logs are not saved and emitted to stdout')
@@ -463,7 +464,7 @@ verified_images = 0
 
 if dataset:
     if config.input_box is None:
-        tests = get_tests(dataset, config.geometric)
+        tests = get_tests(dataset, config.ind, config.geometric)
     else:
         tests = open(config.input_box, 'r').read()
 
@@ -481,7 +482,6 @@ if dataset=='acasxu':
         specUB = [interval[1] for interval in box]
         normalize(specLB, means, stds, dataset)
         normalize(specUB, means, stds, dataset)
-
 
         rec_start = time.time()
 
@@ -541,14 +541,14 @@ if dataset=='acasxu':
                             #hold,_,nlb,nub = eran.analyze_box(specLB, specUB, domain, config.timeout_lp, config.timeout_milp, config.use_default_heuristic, constraints)
                             #if not hold:
                             #    if complete==True:
-                            #       verified_flag,adv_image = verify_network_with_milp(nn, specLB, specUB, nlb, nub, constraints)
-                            #       #complete_list.append((i,j,k,l,m))
-                            #       if verified_flag==False:
-                            #          flag = False
-                            #          assert 0
+                            #        verified_flag,adv_image = verify_network_with_milp(nn, specLB, specUB, nlb, nub, constraints)
+                            #        complete_list.append((i,j,k,l,m))
+                            #        if verified_flag==False:
+                            #            flag = False
+                            #            assert 0
                             #    else:
-                            #       flag = False
-                            #       break
+                            #        flag = False
+                            #        break
                             #if config.debug:
                             #    sys.stdout.write('\rsplit %i, %i, %i, %i, %i %.02f sec' % (i, j, k, l, m, time.time()-start))
 
@@ -556,7 +556,7 @@ if dataset=='acasxu':
         #print("LENGTH ", len(multi_bounds))
         failed_already = Value('i',1)
         try:
-            with Pool(processes=10, initializer=init, initargs=(failed_already,)) as pool:
+            with Pool(processes=config.numproc, initializer=init, initargs=(failed_already,)) as pool:
                 res = pool.starmap(acasxu_recursive, multi_bounds)
 
             if all(res):
@@ -1217,7 +1217,7 @@ else:
         targetfile = open(config.target, 'r')
         targets = csv.reader(targetfile, delimiter=',')
         for i, val in enumerate(targets):
-            target = val   
+            target = val
    
    
     if config.epsfile != None:
@@ -1225,7 +1225,7 @@ else:
         epsilons = csv.reader(epsfile, delimiter=',')
         for i, val in enumerate(epsilons):
             eps_array = val  
-            
+
     for i, test in enumerate(tests):
         if config.from_test and i < config.from_test:
             continue
@@ -1263,30 +1263,32 @@ else:
                 specLB = specLB - epsilon
                 specUB = specUB + epsilon
             start = time.time()
-            if config.target == None:
-                prop = -1
-            else:
-                prop = int(target[i])
+
+            prop = int(config.target_label)
             perturbed_label, _, nlb, nub,failed_labels, x = eran.analyze_box(specLB, specUB, domain, config.timeout_lp, config.timeout_milp, config.use_default_heuristic,label=label, prop=prop)
+            print(perturbed_label, failed_labels)
             print("nlb ", nlb[-1], " nub ", nub[-1],"adv labels ", failed_labels)
             if(perturbed_label==label):
                 print("img", i, "Verified", label)
+                print('unsat')
                 verified_images += 1
             else:
-                if complete==True and (domain == 'deeppoly' or domain == 'deepzono'):
+                if complete==True:# and (domain == 'deeppoly' or domain == 'deepzono'):
                     constraints = get_constraints_for_dominant_label(label, failed_labels)
                     verified_flag,adv_image = verify_network_with_milp(nn, specLB, specUB, nlb, nub, constraints)
                     if(verified_flag==True):
-                        print("img", i, "Verified as Safe", label)
+                        #print("img", i, "Verified as Safe", label)
+                        print('unsat')
                         verified_images += 1
                     else:
-                        
                         if adv_image != None:
                             cex_label,_,_,_,_,_ = eran.analyze_box(adv_image[0], adv_image[0], 'deepzono', config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
                             if(cex_label!=label):
                                 denormalize(adv_image[0], means, stds, dataset)
-                                print("img", i, "Verified unsafe with adversarial image ", adv_image, "cex label", cex_label, "correct label ", label)
-                        print("img", i, "Failed")
+                                #print("img", i, "Verified unsafe with adversarial image ", adv_image, "cex label", cex_label, "correct label ", label)
+                                print("sat")
+                        else:
+                            print("UNKNOWN")
                 else:
                     
                     if x != None:
@@ -1302,8 +1304,8 @@ else:
 
             correctly_classified_images +=1
             end = time.time()
-            print(end - start, "seconds")
+            #print(end - start, "seconds")
         else:
-            print("img",i,"not considered, correct_label", int(test[0]), "classified label ", label)
-
-    print('analysis precision ',verified_images,'/ ', correctly_classified_images)
+            #print("img",i,"not considered, correct_label", int(test[0]), "classified label ", label)
+            print("UNKNOWN")
+        #print('analysis precision ',verified_images,'/ ', correctly_classified_images)
