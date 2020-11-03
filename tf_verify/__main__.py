@@ -1288,7 +1288,7 @@ else:
                                 #print("img", i, "Verified unsafe with adversarial image ", adv_image, "cex label", cex_label, "correct label ", label)
                                 print("sat")
                         else:
-                            print("UNKNOWN")
+                            print("unknown")
                 else:
                     
                     if x != None:
@@ -1307,5 +1307,5 @@ else:
             #print(end - start, "seconds")
         else:
             #print("img",i,"not considered, correct_label", int(test[0]), "classified label ", label)
-            print("UNKNOWN")
+            print("unknown")
         #print('analysis precision ',verified_images,'/ ', correctly_classified_images)
