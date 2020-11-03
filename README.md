@@ -248,13 +248,13 @@ will run DeepZ for analyzing property 9 of ACASXu benchmarks. The ACASXU network
 Geometric analysis
 
 ```
-python3 . --netname ../nets/pytorch/mnist/convBig__DiffAI.pyt --geometric --geometric_config ../deepg/examples/example1/config.txt --num_params 1 --dataset mnist
+python3 . --netname ../nets/pytorch/mnist/convBig__DiffAI.pyt --geometric --geometric_config ../deepg/code/examples/example1/config.txt --num_params 1 --dataset mnist
 ```
 will on the fly generate geometric perturbed images and evaluate the network against them. For more information on the geometric configuration file please see [Format of the configuration file in DeepG](https://github.com/eth-sri/deepg#format-of-configuration-file).
 
 
 ```
-python3 . --netname ../nets/pytorch/mnist/convBig__DiffAI.pyt --geometric --data_dir ../deepg/examples/example1/ --num_params 1 --dataset mnist --attack
+python3 . --netname ../nets/pytorch/mnist/convBig__DiffAI.pyt --geometric --data_dir ../deepg/code/examples/example1/ --num_params 1 --dataset mnist --attack
 ```
 will evaluate the generated geometric perturbed images in the given data_dir and also evaluate generated attack images.
 
