@@ -561,13 +561,15 @@ if dataset=='acasxu':
 
             if all(res):
                 print("AcasXu property", config.specnumber, "Verified for Box", box_index, "out of",len(boxes))
+                print('unsat')
             else:
                 print("AcasXu property", config.specnumber, "Failed for Box", box_index, "out of",len(boxes))
+                print('sat')
         except Exception as e:
             print("AcasXu property", config.specnumber, "Failed for Box", box_index, "out of",len(boxes),"because of an exception ",e)
 
-        print(time.time() - rec_start, "seconds")
-    print("Total time needed:", time.time() - total_start, "seconds")
+        #print(time.time() - rec_start, "seconds")
+    #print("Total time needed:", time.time() - total_start, "seconds")
 
 elif zonotope_bool:
     perturbed_label, nn, nlb, nub,_ = eran.analyze_zonotope(zonotope, domain, config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
