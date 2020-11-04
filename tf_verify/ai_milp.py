@@ -778,3 +778,31 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
     else:
         return True, None
 
+def verify_network_with_milp_taxi(nn, LB_N0, UB_N0, nlb, nub, constraint):
+    nn.ffn_counter = 0
+    nn.conv_counter = 0
+    nn.residual_counter = 0
+    nn.maxpool_counter = 0
+    numlayer = nn.numlayer
+    input_size = len(LB_N0)
+    counter, var_list, model = create_model(nn, LB_N0, UB_N0, nlb, nub, None, numlayer, True)
+    #print("timeout ", config.timeout_milp)
+    model.setParam(GRB.Param.TimeLimit, config.timeout_complete)
+                    
+    adv_examples = []
+    non_adv_examples = []
+    or_result = False
+    i,j,k = constraint
+    expr = LinExpr()
+    expr = 1*var_list[counter+i]
+    model.addConstr(expr, GRB.LESS_EQUAL, k)
+    model.optimize(milp_callback)
+    
+    status = model.getAttr(GRB.Attr.Status)
+    if status == GRB.INFEASIBLE or status == GRB.INF_OR_UNBD:
+        return 'unsat', None
+    elif model.solcount > 0:
+        adv_examples.append(model.x[0:input_size])
+        return 'sat', adv_examples
+    else:
+        return 'unknown', None

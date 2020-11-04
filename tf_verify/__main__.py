@@ -41,6 +41,7 @@ import torch
 import spatial
 from copy import deepcopy
 from keras.datasets import mnist
+import h5py
 
 #ZONOTOPE_EXTENSION = '.zt'
 EPS = 10**(-9)
@@ -279,9 +280,20 @@ def get_tests(dataset, index, geometric):
     if geometric:
         csvfile = open('../deepg/code/datasets/{}_test.csv'.format(dataset), 'r')
     elif dataset == 'mnist':
-            (x_train, y_train), (X_test, y_test) = mnist.load_data()
-            image = np.array(x_train[index]).flatten().tolist()
-            tests = [[y_train[index]] + image]
+        (x_train, y_train), (X_test, y_test) = mnist.load_data()
+        image = np.array(x_train[index]).flatten().tolist()
+        tests = [[y_train[index]] + image]
+    elif 'taxi' in dataset:
+        if dataset == "taxi512": 
+            load_file = "/barrett/scratch/haozewu/leaderBoard/data/networks/taxi/boeing_training_data/32x16.h5"
+        elif dataset == "taxi2048": 
+            load_file = "/barrett/scratch/haozewu/leaderBoard/data/networks/taxi/boeing_training_data/64x32.h5"
+        
+        training_data_file = h5py.File(load_file,'r')
+        X_train = np.array(training_data_file['X_train'])
+        Y_train = np.array(training_data_file['y_train'])
+        training_data_file.close()
+        tests = [[Y_train[index][0]] +  np.array(X_train[index]).flatten().tolist()]
     else:
         tests = []
     return tests
@@ -383,7 +395,7 @@ elif not config.geometric:
 dataset = config.dataset
 
 if zonotope_bool==False:
-   assert dataset in ['mnist', 'cifar10', 'acasxu', 'fashion'], "only mnist, cifar10, acasxu, and fashion datasets are supported"
+   assert dataset in ['mnist', 'cifar10', 'acasxu', 'fashion', 'taxi512', 'taxi2048'], "only mnist, cifar10, acasxu, and fashion datasets are supported"
 
 constraints = None
 if config.output_constraints:
@@ -431,6 +443,10 @@ else:
         num_pixels = 784
     elif (dataset=='cifar10'):
         num_pixels = 3072
+    elif (dataset=='taxi512'):
+        num_pixels = 512
+    elif (dataset=='taxi2048'):
+        num_pixels = 2048
     elif(dataset=='acasxu'):
         num_pixels = 5
     if is_onnx:
@@ -571,648 +587,36 @@ if dataset=='acasxu':
         #print(time.time() - rec_start, "seconds")
     #print("Total time needed:", time.time() - total_start, "seconds")
 
-elif zonotope_bool:
-    perturbed_label, nn, nlb, nub,_ = eran.analyze_zonotope(zonotope, domain, config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-    print("nlb ",nlb[-1])
-    print("nub ",nub[-1])
-    if(perturbed_label!=-1):
-        print("Verified")
-    elif(complete==True):
-        constraints = get_constraints_for_dominant_label(perturbed_label, 10)
-        verified_flag,adv_image = verify_network_with_milp(nn, zonotope, [], nlb, nub, constraints)
-        if(verified_flag==True):
-            print("Verified")
-        else:
-            print("Failed")
-    else:
-         print("Failed")
-
-
-elif config.geometric:
-    from geometric_constraints import *
-    total, attacked, standard_correct, tot_time = 0, 0, 0, 0
-    correct_box, correct_poly = 0, 0
-    cver_box, cver_poly = [], []
-    if config.geometric_config:
-        transform_attack_container = get_transform_attack_container(config.geometric_config)
-        for i, test in enumerate(tests):
-            if config.from_test and i < config.from_test:
-                continue
-
-            if config.num_tests is not None and i >= config.num_tests:
-                break
-            set_transform_attack_for(transform_attack_container, i, config.attack, config.debug)
-            attack_params = get_attack_params(transform_attack_container)
-            attack_images = get_attack_images(transform_attack_container)
-            print('Test {}:'.format(i))
-
-            image = np.float64(test[1:])
-            if config.dataset == 'mnist' or config.dataset == 'fashion':
-                n_rows, n_cols, n_channels = 28, 28, 1
-            else:
-                n_rows, n_cols, n_channels = 32, 32, 3
-
-            spec_lb = np.copy(image)
-            spec_ub = np.copy(image)
-
-            normalize(spec_lb, means, stds, config.dataset)
-            normalize(spec_ub, means, stds, config.dataset)
-
-            label, nn, nlb, nub,_,_ = eran.analyze_box(spec_lb, spec_ub, 'deeppoly', config.timeout_lp, config.timeout_milp,
-                                                   config.use_default_heuristic)
-            print('Label: ', label)
-
-            begtime = time.time()
-            if label != int(test[0]):
-                print('Label {}, but true label is {}, skipping...'.format(label, int(test[0])))
-                print('Standard accuracy: {} percent'.format(standard_correct / float(i + 1) * 100))
-                continue
-            else:
-                standard_correct += 1
-                print('Standard accuracy: {} percent'.format(standard_correct / float(i + 1) * 100))
-
-            dim = n_rows * n_cols * n_channels
-
-            ok_box, ok_poly = True, True
-            k = config.num_params + 1 + 1 + dim
-
-            attack_imgs, checked, attack_pass = [], [], 0
-            cex_found = False
-            if config.attack:
-                for j in tqdm(range(0, len(attack_params))):
-                    params = attack_params[j]
-                    values = np.array(attack_images[j])
-
-                    attack_lb = values[::2]
-                    attack_ub = values[1::2]
-
-                    normalize(attack_lb, means, stds, config.dataset)
-                    normalize(attack_ub, means, stds, config.dataset)
-                    attack_imgs.append((params, attack_lb, attack_ub))
-                    checked.append(False)
-
-                    predict_label, _, _, _, _, _ = eran.analyze_box(
-                        attack_lb[:dim], attack_ub[:dim], 'deeppoly',
-                        config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-                    if predict_label != int(test[0]):
-                        print('counter-example, params: ', params, ', predicted label: ', predict_label)
-                        cex_found = True
-                        break
-                    else:
-                        attack_pass += 1
-            print('tot attacks: ', len(attack_imgs))
-
-            lines = get_transformations(transform_attack_container)
-            print('Number of lines: ', len(lines))
-            assert len(lines) % k == 0
-
-            spec_lb = np.zeros(config.num_params + dim)
-            spec_ub = np.zeros(config.num_params + dim)
-
-            expr_size = config.num_params
-            lexpr_cst, uexpr_cst = [], []
-            lexpr_weights, uexpr_weights = [], []
-            lexpr_dim, uexpr_dim = [], []
-
-            ver_chunks_box, ver_chunks_poly, tot_chunks = 0, 0, 0
-
-            for i, line in enumerate(lines):
-                if i % k < config.num_params:
-                    # read specs for the parameters
-                    values = line
-                    assert len(values) == 2
-                    param_idx = i % k
-                    spec_lb[dim + param_idx] = values[0]
-                    spec_ub[dim + param_idx] = values[1]
-                    if config.debug:
-                        print('parameter %d: [%.4f, %.4f]' % (param_idx, values[0], values[1]))
-                elif i % k == config.num_params:
-                    # read interval bounds for image pixels
-                    values = line
-                    spec_lb[:dim] = values[::2]
-                    spec_ub[:dim] = values[1::2]
-                    # if config.debug:
-                    #     show_ascii_spec(spec_lb, spec_ub)
-                elif i % k < k - 1:
-                    # read polyhedra constraints for image pixels
-                    tokens = line
-                    assert len(tokens) == 2 + 2 * config.num_params
-
-                    bias_lower, weights_lower = tokens[0], tokens[1:1 + config.num_params]
-                    bias_upper, weights_upper = tokens[config.num_params + 1], tokens[2 + config.num_params:]
-
-                    assert len(weights_lower) == config.num_params
-                    assert len(weights_upper) == config.num_params
-
-                    lexpr_cst.append(bias_lower)
-                    uexpr_cst.append(bias_upper)
-                    for j in range(config.num_params):
-                        lexpr_dim.append(dim + j)
-                        uexpr_dim.append(dim + j)
-                        lexpr_weights.append(weights_lower[j])
-                        uexpr_weights.append(weights_upper[j])
-                else:
-                    assert (len(line) == 0)
-                    for p_idx in range(config.num_params):
-                        lexpr_cst.append(spec_lb[dim + p_idx])
-                        for l in range(config.num_params):
-                            lexpr_weights.append(0)
-                            lexpr_dim.append(dim + l)
-                        uexpr_cst.append(spec_ub[dim + p_idx])
-                        for l in range(config.num_params):
-                            uexpr_weights.append(0)
-                            uexpr_dim.append(dim + l)
-                    normalize(spec_lb[:dim], means, stds, config.dataset)
-                    normalize(spec_ub[:dim], means, stds, config.dataset)
-                    normalize_poly(config.num_params, lexpr_cst, lexpr_weights, lexpr_dim, uexpr_cst, uexpr_weights,
-                                   uexpr_dim, means, stds, config.dataset)
-
-                    for attack_idx, (attack_params, attack_lb, attack_ub) in enumerate(attack_imgs):
-                        ok_attack = True
-                        for j in range(num_pixels):
-                            low, up = lexpr_cst[j], uexpr_cst[j]
-                            for idx in range(config.num_params):
-                                low += lexpr_weights[j * config.num_params + idx] * attack_params[idx]
-                                up += uexpr_weights[j * config.num_params + idx] * attack_params[idx]
-                            if low > attack_lb[j] + EPS or attack_ub[j] > up + EPS:
-                                ok_attack = False
-                        if ok_attack:
-                            checked[attack_idx] = True
-                            # print('checked ', attack_idx)
-                    if config.debug:
-                        print('Running the analysis...')
-
-                    t_begin = time.time()
-                    perturbed_label_poly, _, _, _, _, _ = eran.analyze_box(
-                        spec_lb, spec_ub, 'deeppoly',
-                        config.timeout_lp, config.timeout_milp, config.use_default_heuristic, None,
-                        lexpr_weights, lexpr_cst, lexpr_dim,
-                        uexpr_weights, uexpr_cst, uexpr_dim,
-                        expr_size)
-                    perturbed_label_box, _, _, _, _, _ = eran.analyze_box(
-                        spec_lb[:dim], spec_ub[:dim], 'deeppoly',
-                        config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-                    t_end = time.time()
-
-                    print('DeepG: ', perturbed_label_poly, '\tInterval: ', perturbed_label_box, '\tlabel: ', label,
-                          '[Time: %.4f]' % (t_end - t_begin))
-
-                    tot_chunks += 1
-                    if perturbed_label_box != label:
-                        ok_box = False
-                    else:
-                        ver_chunks_box += 1
-
-                    if perturbed_label_poly != label:
-                        ok_poly = False
-                    else:
-                        ver_chunks_poly += 1
-
-                    lexpr_cst, uexpr_cst = [], []
-                    lexpr_weights, uexpr_weights = [], []
-                    lexpr_dim, uexpr_dim = [], []
-
-            total += 1
-            if ok_box:
-                correct_box += 1
-            if ok_poly:
-                correct_poly += 1
-            if cex_found:
-                assert (not ok_box) and (not ok_poly)
-                attacked += 1
-            cver_poly.append(ver_chunks_poly / float(tot_chunks))
-            cver_box.append(ver_chunks_box / float(tot_chunks))
-            tot_time += time.time() - begtime
-
-            print('Verified[box]: {}, Verified[poly]: {}, CEX found: {}'.format(ok_box, ok_poly, cex_found))
-            assert not cex_found or not ok_box, 'ERROR! Found counter-example, but image was verified with box!'
-            assert not cex_found or not ok_poly, 'ERROR! Found counter-example, but image was verified with poly!'
-
-
-    else:
-        for i, test in enumerate(tests):
-            if config.from_test and i < config.from_test:
-                continue
-
-            if config.num_tests is not None and i >= config.num_tests:
-                break
-
-            attacks_file = os.path.join(config.data_dir, 'attack_{}.csv'.format(i))
-            print('Test {}:'.format(i))
-
-            image = np.float64(test[1:])
-            if config.dataset == 'mnist' or config.dataset == 'fashion':
-                n_rows, n_cols, n_channels = 28, 28, 1
-            else:
-                n_rows, n_cols, n_channels = 32, 32, 3
-
-            spec_lb = np.copy(image)
-            spec_ub = np.copy(image)
-
-            normalize(spec_lb, means, stds, config.dataset)
-            normalize(spec_ub, means, stds, config.dataset)
-            
-            label, nn, nlb, nub, _, _ = eran.analyze_box(spec_lb, spec_ub, 'deeppoly', config.timeout_lp, config.timeout_milp,
-                                                   config.use_default_heuristic)
-            print('Label: ', label)
-
-            begtime = time.time()
-            if label != int(test[0]):
-                print('Label {}, but true label is {}, skipping...'.format(label, int(test[0])))
-                print('Standard accuracy: {} percent'.format(standard_correct / float(i + 1) * 100))
-                continue
-            else:
-                standard_correct += 1
-                print('Standard accuracy: {} percent'.format(standard_correct / float(i + 1) * 100))
-
-            dim = n_rows * n_cols * n_channels
-
-            ok_box, ok_poly = True, True
-            k = config.num_params + 1 + 1 + dim
-
-            attack_imgs, checked, attack_pass = [], [], 0
-            cex_found = False
-            if config.attack:
-                with open(attacks_file, 'r') as fin:
-                    lines = fin.readlines()
-                    for j in tqdm(range(0, len(lines), config.num_params + 1)):
-                        params = [float(line[:-1]) for line in lines[j:j + config.num_params]]
-                        tokens = lines[j + config.num_params].split(',')
-                        values = np.array(list(map(float, tokens)))
-
-                        attack_lb = values[::2]
-                        attack_ub = values[1::2]
-
-                        normalize(attack_lb, means, stds, config.dataset)
-                        normalize(attack_ub, means, stds, config.dataset)
-                        attack_imgs.append((params, attack_lb, attack_ub))
-                        checked.append(False)
-
-                        predict_label, _, _, _, _, _ = eran.analyze_box(
-                            attack_lb[:dim], attack_ub[:dim], 'deeppoly',
-                            config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-                        if predict_label != int(test[0]):
-                            print('counter-example, params: ', params, ', predicted label: ', predict_label)
-                            cex_found = True
-                            break
-                        else:
-                            attack_pass += 1
-            print('tot attacks: ', len(attack_imgs))
-            specs_file = os.path.join(config.data_dir, '{}.csv'.format(i))
-            with open(specs_file, 'r') as fin:
-                lines = fin.readlines()
-                print('Number of lines: ', len(lines))
-                assert len(lines) % k == 0
-
-                spec_lb = np.zeros(config.num_params + dim)
-                spec_ub = np.zeros(config.num_params + dim)
-
-                expr_size = config.num_params
-                lexpr_cst, uexpr_cst = [], []
-                lexpr_weights, uexpr_weights = [], []
-                lexpr_dim, uexpr_dim = [], []
-
-                ver_chunks_box, ver_chunks_poly, tot_chunks = 0, 0, 0
-
-                for i, line in enumerate(lines):
-                    if i % k < config.num_params:
-                        # read specs for the parameters
-                        values = np.array(list(map(float, line[:-1].split(' '))))
-                        assert values.shape[0] == 2
-                        param_idx = i % k
-                        spec_lb[dim + param_idx] = values[0]
-                        spec_ub[dim + param_idx] = values[1]
-                        if config.debug:
-                            print('parameter %d: [%.4f, %.4f]' % (param_idx, values[0], values[1]))
-                    elif i % k == config.num_params:
-                        # read interval bounds for image pixels
-                        values = np.array(list(map(float, line[:-1].split(','))))
-                        spec_lb[:dim] = values[::2]
-                        spec_ub[:dim] = values[1::2]
-                        # if config.debug:
-                        #     show_ascii_spec(spec_lb, spec_ub)
-                    elif i % k < k - 1:
-                        # read polyhedra constraints for image pixels
-                        tokens = line[:-1].split(' ')
-                        assert len(tokens) == 2 + 2 * config.num_params + 1
-
-                        bias_lower, weights_lower = float(tokens[0]), list(map(float, tokens[1:1 + config.num_params]))
-                        assert tokens[config.num_params + 1] == '|'
-                        bias_upper, weights_upper = float(tokens[config.num_params + 2]), list(
-                            map(float, tokens[3 + config.num_params:]))
-
-                        assert len(weights_lower) == config.num_params
-                        assert len(weights_upper) == config.num_params
-
-                        lexpr_cst.append(bias_lower)
-                        uexpr_cst.append(bias_upper)
-                        for j in range(config.num_params):
-                            lexpr_dim.append(dim + j)
-                            uexpr_dim.append(dim + j)
-                            lexpr_weights.append(weights_lower[j])
-                            uexpr_weights.append(weights_upper[j])
-                    else:
-                        assert (line == 'SPEC_FINISHED\n')
-                        for p_idx in range(config.num_params):
-                            lexpr_cst.append(spec_lb[dim + p_idx])
-                            for l in range(config.num_params):
-                                lexpr_weights.append(0)
-                                lexpr_dim.append(dim + l)
-                            uexpr_cst.append(spec_ub[dim + p_idx])
-                            for l in range(config.num_params):
-                                uexpr_weights.append(0)
-                                uexpr_dim.append(dim + l)
-                        normalize(spec_lb[:dim], means, stds, config.dataset)
-                        normalize(spec_ub[:dim], means, stds, config.dataset)
-                        normalize_poly(config.num_params, lexpr_cst, lexpr_weights, lexpr_dim, uexpr_cst, uexpr_weights,
-                                       uexpr_dim, means, stds, config.dataset)
-
-                        for attack_idx, (attack_params, attack_lb, attack_ub) in enumerate(attack_imgs):
-                            ok_attack = True
-                            for j in range(num_pixels):
-                                low, up = lexpr_cst[j], uexpr_cst[j]
-                                for idx in range(config.num_params):
-                                    low += lexpr_weights[j * config.num_params + idx] * attack_params[idx]
-                                    up += uexpr_weights[j * config.num_params + idx] * attack_params[idx]
-                                if low > attack_lb[j] + EPS or attack_ub[j] > up + EPS:
-                                    ok_attack = False
-                            if ok_attack:
-                                checked[attack_idx] = True
-                                # print('checked ', attack_idx)
-                        if config.debug:
-                            print('Running the analysis...')
-
-                        t_begin = time.time()
-                        perturbed_label_poly, _, _, _ , _, _ = eran.analyze_box(
-                            spec_lb, spec_ub, 'deeppoly',
-                            config.timeout_lp, config.timeout_milp, config.use_default_heuristic, None,
-                            lexpr_weights, lexpr_cst, lexpr_dim,
-                            uexpr_weights, uexpr_cst, uexpr_dim,
-                            expr_size)
-                        perturbed_label_box, _, _, _, _, _ = eran.analyze_box(
-                            spec_lb[:dim], spec_ub[:dim], 'deeppoly',
-                            config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-                        t_end = time.time()
-
-                        print('DeepG: ', perturbed_label_poly, '\tInterval: ', perturbed_label_box, '\tlabel: ', label,
-                              '[Time: %.4f]' % (t_end - t_begin))
-
-                        tot_chunks += 1
-                        if perturbed_label_box != label:
-                            ok_box = False
-                        else:
-                            ver_chunks_box += 1
-
-                        if perturbed_label_poly != label:
-                            ok_poly = False
-                        else:
-                            ver_chunks_poly += 1
-
-                        lexpr_cst, uexpr_cst = [], []
-                        lexpr_weights, uexpr_weights = [], []
-                        lexpr_dim, uexpr_dim = [], []
-
-            total += 1
-            if ok_box:
-                correct_box += 1
-            if ok_poly:
-                correct_poly += 1
-            if cex_found:
-                assert (not ok_box) and (not ok_poly)
-                attacked += 1
-            cver_poly.append(ver_chunks_poly / float(tot_chunks))
-            cver_box.append(ver_chunks_box / float(tot_chunks))
-            tot_time += time.time() - begtime
-
-            print('Verified[box]: {}, Verified[poly]: {}, CEX found: {}'.format(ok_box, ok_poly, cex_found))
-            assert not cex_found or not ok_box, 'ERROR! Found counter-example, but image was verified with box!'
-            assert not cex_found or not ok_poly, 'ERROR! Found counter-example, but image was verified with poly!'
-
-    print('Attacks found: %.2f percent, %d/%d' % (100.0 * attacked / total, attacked, total))
-    print('[Box]  Provably robust: %.2f percent, %d/%d' % (100.0 * correct_box / total, correct_box, total))
-    print('[Poly] Provably robust: %.2f percent, %d/%d' % (100.0 * correct_poly / total, correct_poly, total))
-    print('Empirically robust: %.2f percent, %d/%d' % (100.0 * (total - attacked) / total, total - attacked, total))
-    print('[Box]  Average chunks verified: %.2f percent' % (100.0 * np.mean(cver_box)))
-    print('[Poly]  Average chunks verified: %.2f percent' % (100.0 * np.mean(cver_poly)))
-    print('Average time: ', tot_time / total)
-
-elif config.input_box is not None:
-    boxes = parse_input_box(tests)
-    index = 1
-    correct = 0
-    for box in boxes:
-        specLB = [interval[0] for interval in box]
-        specUB = [interval[1] for interval in box]
-        normalize(specLB, means, stds, dataset)
-        normalize(specUB, means, stds, dataset)
-        hold, nn, nlb, nub,_ = eran.analyze_box(specLB, specUB, domain, config.timeout_lp, config.timeout_milp, config.use_default_heuristic, constraints)
-        if hold:
-            print('constraints hold for box ' + str(index) + ' out of ' + str(sum([1 for b in boxes])))
-            correct += 1
-        else:
-            print('constraints do NOT hold for box ' + str(index) + ' out of ' + str(sum([1 for b in boxes])))
-
-        index += 1
-
-    print('constraints hold for ' + str(correct) + ' out of ' + str(sum([1 for b in boxes])) + ' boxes')
-
-elif config.spatial:
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    if config.dataset in ['mnist', 'fashion']:
-        height, width, channels = 28, 28, 1
-    else:
-        height, width, channels = 32, 32, 3
-
-    for idx, test in enumerate(tests):
-
-        if idx < config.from_test:
+elif 'taxi' in dataset:
+    for i, test in enumerate(tests):
+        if config.from_test and i < config.from_test:
             continue
 
-        if (config.num_tests is not None) and (config.from_test + config.num_tests == idx):
-            break
+        y0 = test[0]
+        image= np.array(test[1:])
+        specLB = np.copy(image)
+        specUB = np.copy(image)
 
-        image = torch.from_numpy(
-            np.float64(test[1:len(test)]) / np.float64(255)
-        ).reshape(1, height, width, channels).permute(0, 3, 1, 2).to(device)
-        label = np.int(test[0])
+        scalar = y0 - config.delta
 
-        specLB = image.clone().permute(0, 2, 3, 1).flatten().cpu()
-        specUB = image.clone().permute(0, 2, 3, 1).flatten().cpu()
+        label,nn,nlb,nub,_,_ = eran.analyze_box(specLB, specUB, init_domain(domain), config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
         
-        normalize(specLB, means, stds, dataset)
-        normalize(specUB, means, stds, dataset)
+        specLB = np.clip(image - epsilon,0,1)
+        specUB = np.clip(image + epsilon,0,1)
 
-        predicted_label, nn, nlb, nub, _, _ = eran.analyze_box(
-            specLB=specLB, specUB=specUB, domain=init_domain(domain), 
-            timeout_lp=config.timeout_lp, timeout_milp=config.timeout_milp, 
-            use_default_heuristic=config.use_default_heuristic
-        )
-
-        print(f'concrete {nlb[-1]}')
-
-        if label != predicted_label:
-            print(f'img {idx} not considered, correct_label {label}, classified label {predicted_label}')
-            continue
-
-        correctly_classified_images += 1
-        start = time.time()
-
-        transformer = getattr(
-            spatial, f'T{config.t_norm.capitalize()}NormTransformer'
-        )(image, config.delta)
-        box_lb, box_ub = transformer.box_constraints()
-
-        lower_bounds = box_lb.permute(0, 2, 3, 1).flatten()
-        upper_bounds = box_ub.permute(0, 2, 3, 1).flatten()
-
-        normalize(lower_bounds, means, stds, dataset)
-        normalize(upper_bounds, means, stds, dataset)
-
-        specLB, specUB = lower_bounds.clone(), upper_bounds.clone()
-        LB_N0, UB_N0 = lower_bounds.clone(), upper_bounds.clone()
-
-        expr_size = 0
-        lexpr_weights = lexpr_cst = lexpr_dim = None
-        uexpr_weights = uexpr_cst = uexpr_dim = None
-        lower_planes = upper_planes = None
-        deeppoly_spatial_constraints = milp_spatial_constraints = None
-
-        if config.gamma < float('inf'):
-
-            expr_size = 2
-            lower_planes, upper_planes = list(), list()
-            lexpr_weights, lexpr_cst, lexpr_dim = list(), list(), list()
-            uexpr_weights, uexpr_cst, uexpr_dim = list(), list(), list()
-
-            linear_lb, linear_ub = transformer.linear_constraints()
-
-            for channel in range(image.shape[1]):
-                lb_a, lb_b, lb_c = linear_lb[channel]
-                ub_a, ub_b, ub_c = linear_ub[channel]
-
-                linear_lb[channel][0] = normalize_plane(
-                    lb_a, means, stds, channel, is_constant=True
-                )
-                linear_lb[channel][1] = normalize_plane(
-                    lb_b, means, stds, channel, is_constant=False
-                )
-                linear_lb[channel][2] = normalize_plane(
-                    lb_c, means, stds, channel, is_constant=False
-                )
-
-                linear_ub[channel][0] = normalize_plane(
-                    ub_a, means, stds, channel, is_constant=True
-                )
-                linear_ub[channel][1] = normalize_plane(
-                    ub_b, means, stds, channel, is_constant=False
-                )
-                linear_ub[channel][2] = normalize_plane(
-                    ub_c, means, stds, channel, is_constant=False
-                )
-
-            for i in range(3):
-                lower_planes.append(
-                    torch.cat(
-                        [
-                            linear_lb[channel][i].unsqueeze(-1)
-                            for channel in range(image.shape[1])
-                        ], dim=-1
-                    ).flatten().tolist()
-                )
-                upper_planes.append(
-                    torch.cat(
-                        [
-                            linear_ub[channel][i].unsqueeze(-1)
-                            for channel in range(image.shape[1])
-                        ], dim=-1
-                    ).flatten().tolist()
-                )
-
-            deeppoly_spatial_constraints = {'gamma': config.gamma}
-
-            for key, val in transformer.flow_constraint_pairs.items():
-                deeppoly_spatial_constraints[key] = val.cpu()
-
-            milp_spatial_constraints = {
-                'delta': config.delta, 'gamma': config.gamma, 
-                'channels': image.shape[1], 'lower_planes': lower_planes, 
-                'upper_planes': upper_planes,
-                'add_norm_constraints': transformer.add_norm_constraints,
-                'neighboring_indices': transformer.flow_constraint_pairs
-            }
-
-            num_pixels = image.flatten().shape[0]
-            num_flows = 2 * num_pixels
-
-            flows_LB = torch.full((num_flows,), -config.delta).to(device)
-            flows_UB = torch.full((num_flows,), config.delta).to(device)
-
-            specLB = torch.cat((specLB, flows_LB))
-            specUB = torch.cat((specUB, flows_UB))
-
-            lexpr_cst = deepcopy(lower_planes[0]) + flows_LB.tolist()
-            uexpr_cst = deepcopy(upper_planes[0]) + flows_UB.tolist()
-
-            lexpr_weights = [
-                v for p in zip(lower_planes[1], lower_planes[2]) for v in p
-            ] + torch.zeros(2 * num_flows).tolist()
-            uexpr_weights = [
-                v for p in zip(upper_planes[1], upper_planes[2]) for v in p
-            ] + torch.zeros(2 * num_flows).tolist()
-
-            lexpr_dim = torch.cat([
-                num_pixels + torch.arange(num_flows),
-                torch.zeros(2 * num_flows).long()
-            ]).tolist()
-            uexpr_dim = torch.cat([
-                num_pixels + torch.arange(num_flows),
-                torch.zeros(2 * num_flows).long()
-            ]).tolist()
-
-        perturbed_label, _, nlb, nub, failed_labels, _ = eran.analyze_box(
-            specLB=specLB.cpu(), specUB=specUB.cpu(), domain=domain,
-            timeout_lp=config.timeout_lp, timeout_milp=config.timeout_milp,
-            use_default_heuristic=config.use_default_heuristic,
-            label=label, lexpr_weights=lexpr_weights, lexpr_cst=lexpr_cst,
-            lexpr_dim=lexpr_dim, uexpr_weights=uexpr_weights, 
-            uexpr_cst=uexpr_cst, uexpr_dim=uexpr_dim, expr_size=expr_size,
-            spatial_constraints=deeppoly_spatial_constraints
-        )
-        end = time.time()
-
-        print(f'nlb {nlb[-1]} nub {nub[-1]} adv labels {failed_labels}')
-
-        if perturbed_label == label:
-            print(f'img {idx} verified {label}')
-            verified_images += 1
-            print(end - start, "seconds")
-            continue
-
-        if (not complete) or (domain not in ['deeppoly', 'deepzono']):
-            print(f'img {idx} Failed')
-            print(end - start, "seconds")
-            continue
-
-        verified_flag, adv_image = verify_network_with_milp(
-            nn=nn, LB_N0=LB_N0, UB_N0=UB_N0, nlb=nlb, nub=nub,
-            constraints=get_constraints_for_dominant_label(
-                predicted_label, failed_labels=failed_labels
-            ), spatial_constraints=milp_spatial_constraints
-        )
-
-        if verified_flag:
-            print(f'img {idx} Verified as Safe {label}')
-            verified_images += 1
+        perturbed_label, _, nlb, nub,failed_labels, x = eran.analyze_box(specLB, specUB, domain, config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
+        print("nlb ", nlb[-1][0], " nub ", nub[-1][0],"upper bound ", scalar)
+        if(nlb[-1][0] > scalar):
+            print("img", i, "Verified")
+            print('unsat')
+        elif complete==True:
+                constraint = (0, -1, scalar)
+                result ,adv_image = verify_network_with_milp_taxi(nn, specLB, specUB, nlb, nub, constraint)
+                print(adv_image)
+                print(result)
         else:
-            print(f'img {idx} Failed')
-
-        end = time.time()
-        print(end - start, "seconds")
-
-    print(f'analysis precision {verified_images} / {correctly_classified_images}')
-
+            print('unknown')
+                
 else:
     target = []
     if config.target != None:
