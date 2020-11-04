@@ -656,6 +656,7 @@ else:
             epsilon = np.float64(eps_array[i])
         print("concrete ", nlb[-1])
         #if(label == int(test[0])):
+        label = int(test[0])
         if(label == int(test[0])):
             perturbed_label = None
             if config.normalized_region==True:
