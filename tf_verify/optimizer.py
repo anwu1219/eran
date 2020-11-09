@@ -17,7 +17,7 @@
 
 from deepzono_nodes import *
 from deeppoly_nodes import *
-from gpupoly import Network
+#from gpupoly import Network
 from functools import reduce
 import numpy as np
 from read_net_file import *
