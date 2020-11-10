@@ -629,7 +629,7 @@ elif 'taxi' in dataset:
         elif complete==True:
                 constraint = (0, -1, scalar)
                 result ,adv_image = verify_network_with_milp_taxi(nn, specLB, specUB, nlb, nub, constraint)
-                print(adv_image)
+                print("Adv image: ", adv_image)
                 print(result)
         else:
             print('unknown')

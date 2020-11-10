@@ -835,9 +835,11 @@ def verify_network_with_milp_taxi(nn, LB_N0, UB_N0, nlb, nub, constraint):
     expr = LinExpr()
     expr = 1*var_list[counter+i]
     model.addConstr(expr, GRB.LESS_EQUAL, k)
+    model.setObjective(0, GRB.MAXIMIZE)
     model.optimize(milp_callback)
     
     status = model.getAttr(GRB.Attr.Status)
+    print(status)
     if status == GRB.INFEASIBLE or status == GRB.INF_OR_UNBD:
         return 'unsat', None
     elif model.solcount > 0:
